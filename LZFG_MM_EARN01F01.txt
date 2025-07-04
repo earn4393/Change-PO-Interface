@@ -1,0 +1,382 @@
+*----------------------------------------------------------------------*
+***INCLUDE LZFG_MM_EARN01F01 .
+*----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_AUTHORIZATION
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_I_APPL  text
+*      -->P_I_UNAME  text
+*      -->P_I_ZCLIENT_ID  text
+*      -->P_0009   text
+*      <--P_ERR_MSG  text
+*      <--P_ERR_TYPE  text
+*----------------------------------------------------------------------*
+FORM CHECK_AUTHORIZATION USING    UV_APPL
+                                   UV_UNAME
+                                   UV_ZCLIENT_ID
+                                   UV_BAPI_NAME
+                          CHANGING CV_ERR_MSG
+                                   CV_ERR_TYPE.
+
+  DATA: I_APPL        TYPE  CHAR20,
+        I_UNAME       TYPE  TEXT20,
+        I_ZCLIENT_ID  TYPE  ZTMM002-ZCLIENT_ID,
+        I_PROG_NAME   TYPE  ZTMM002-ZPROG_NAME,
+        ERR_MSG       TYPE  TEXT100,
+        ERR_TYPE      TYPE  CHAR1.
+
+  I_APPL       = UV_APPL.
+  I_UNAME      = UV_UNAME.
+  I_ZCLIENT_ID = UV_ZCLIENT_ID.
+  I_PROG_NAME  = UV_BAPI_NAME.
+
+  CALL FUNCTION 'ZFM_WEB_INTERFACE'
+    EXPORTING
+      I_APPL       = UV_APPL
+      I_UNAME      = UV_UNAME
+      I_ZCLIENT_ID = UV_ZCLIENT_ID
+      I_PROG_NAME  = I_PROG_NAME
+    IMPORTING
+      ERR_MSG      = ERR_MSG
+      ERR_TYPE     = ERR_TYPE.
+  IF SY-SUBRC = 0.
+    CV_ERR_MSG  = ERR_MSG.
+    CV_ERR_TYPE = ERR_TYPE.
+  ENDIF.
+ENDFORM.                    " CHECK_AUTHORIZATION
+*&---------------------------------------------------------------------*
+*&      Form  VALIDATE_PO_CHANGE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_T_INPUT  text
+*      -->P_I_EBELN  text
+*      <--P_ERR_MSG  text
+*      <--P_ERR_TYPE  text
+*----------------------------------------------------------------------*
+FORM VALIDATE_PO_CHANGE  TABLES   UT_INPUT STRUCTURE ZTMM001
+                         USING    UV_EBELN TYPE EKPO-EBELN
+                         CHANGING CV_ERR_MSG
+                                  CV_ERR_TYPE.
+
+  DATA: LW_EKKO TYPE EKKO,
+        LW_EKPO TYPE EKPO,
+        LV_EBELN TYPE EKPO-EBELN.
+
+
+  LV_EBELN = UV_EBELN.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      INPUT  = LV_EBELN
+    IMPORTING
+      OUTPUT = LV_EBELN.
+
+
+  IF UT_INPUT[] IS INITIAL.
+    CV_ERR_MSG  = 'No data to be updated!'.
+    CV_ERR_TYPE = 'E'.
+    EXIT.
+  ENDIF.
+
+  IF UT_INPUT[] IS NOT INITIAL.
+    SELECT * FROM ZTMM001 INTO TABLE GT_ZTMM001
+      FOR ALL ENTRIES IN UT_INPUT
+      WHERE ZCATAGORY      = UT_INPUT-ZCATAGORY      AND
+            TAB_TYPE_NAME1 = UT_INPUT-TAB_TYPE_NAME1 AND
+            ZFIELD         = UT_INPUT-ZFIELD         .
+    IF SY-SUBRC <> 0.
+      CV_ERR_MSG  = 'No input fields matched with the configuration table!'.
+      CV_ERR_TYPE = 'E'.
+      EXIT.
+    ENDIF.
+  ENDIF.
+
+
+
+  SELECT SINGLE * FROM EKKO INTO LW_EKKO
+    WHERE EBELN = LV_EBELN.
+  IF SY-SUBRC = 0.
+    IF LW_EKKO-BSTYP NE 'F'.
+      CV_ERR_MSG  = 'No po catagory allowed!'.
+      CV_ERR_TYPE = 'E'.
+      EXIT.
+    ENDIF.
+  ELSE.
+    CV_ERR_MSG  = 'No po found!'.
+    CV_ERR_TYPE = 'E'.
+    EXIT.
+  ENDIF.
+
+
+  LOOP AT UT_INPUT INTO GW_INPUT.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        INPUT  = GW_INPUT-EBELN
+      IMPORTING
+        OUTPUT = GW_INPUT-EBELN.
+
+    READ TABLE GT_ZTMM001 INTO GW_ZTMM001 WITH KEY ZCATAGORY      = GW_INPUT-ZCATAGORY
+                                                   TAB_TYPE_NAME1 = GW_INPUT-TAB_TYPE_NAME1
+                                                   ZFIELD         = GW_INPUT-ZFIELD        .
+    IF SY-SUBRC <> 0.
+      CV_ERR_MSG  = 'No input fields matched with the configuration table!'.
+      CV_ERR_TYPE = 'E'.
+      EXIT.
+    ENDIF.
+
+
+**-------------------->>  start add by kanyapak <<--------------------**
+* check conditon item and header
+
+    CASE GW_INPUT-ZCATAGORY.
+      WHEN 'POITEM'.
+        IF GW_INPUT-EBELP IS INITIAL.
+          CV_ERR_MSG  = 'No PO item found when passing item data'.
+          CV_ERR_TYPE = 'E'.
+          EXIT.
+        ENDIF.
+
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            INPUT  = GW_INPUT-EBELN
+          IMPORTING
+            OUTPUT = GW_INPUT-EBELN.
+
+        SELECT SINGLE EBELN EBELP LOEKZ FROM EKPO INTO CORRESPONDING FIELDS OF LW_EKPO
+          WHERE EBELN = LV_EBELN
+          AND   EBELN = GW_INPUT-EBELN
+          AND   EBELP = GW_INPUT-EBELP.
+        IF SY-SUBRC <> 0.
+          CV_ERR_MSG  = 'No item matched with PO number'.
+          CV_ERR_TYPE = 'E'.
+          EXIT.
+        ENDIF.
+
+      WHEN 'POHEADER'.
+        IF GW_INPUT-EBELP IS NOT INITIAL.
+          CV_ERR_MSG  = 'PO item found when passing header data'.
+          CV_ERR_TYPE = 'E'.
+          EXIT.
+        ENDIF.
+      WHEN OTHERS.
+        CV_ERR_MSG  = 'Wrong CATAGORY'.
+        CV_ERR_TYPE = 'E'.
+        EXIT.
+    ENDCASE.
+**-------------------->>  end    add by kanyapak <<--------------------**
+    PERFORM PREP_VALUE  CHANGING CV_ERR_MSG
+                                 CV_ERR_TYPE.
+    IF CV_ERR_TYPE EQ 'E'.
+      EXIT.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                    " VALIDATE_PO_CHANGE
+*&---------------------------------------------------------------------*
+*&      Form  PREP_VALUE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_CV_ERR_MSG  text
+*      <--P_CV_ERR_TYPE  text
+*----------------------------------------------------------------------*
+FORM PREP_VALUE  CHANGING CV_ERR_MSG
+                          CV_ERR_TYPE.
+
+  DATA: LV_STRC TYPE I.
+  CASE GW_ZTMM001-DATATYPE.
+    WHEN 'DATS'.
+      IF GW_INPUT-VAL_NEW CA SY-ABCDE.
+        CV_ERR_TYPE  = 'E'.
+        CV_ERR_MSG   = 'Wrong data type for input'.
+        EXIT.
+      ELSE.
+        LV_STRC = STRLEN( GW_INPUT-VAL_NEW ).
+        IF LV_STRC GT 8.
+          CV_ERR_TYPE  = 'E'.
+          CV_ERR_MSG   = 'Date input must be 8 digits'.
+          EXIT.
+        ENDIF.
+      ENDIF.
+    WHEN 'TIMS' OR 'ACCP'.
+      IF GW_INPUT-VAL_NEW CA SY-ABCDE.
+        CV_ERR_TYPE  = 'E'.
+        CV_ERR_MSG   = 'Wrong data type for input'.
+        EXIT.
+      ELSE.
+        LV_STRC = STRLEN( GW_INPUT-VAL_NEW ).
+        IF LV_STRC GT 6.
+          CV_ERR_TYPE  = 'E'.
+          CV_ERR_MSG   ='Time input must be 6 digits'.
+          EXIT.
+        ENDIF.
+      ENDIF.
+    WHEN 'DEC' OR 'QUAN' OR 'CURR' OR 'INT1' OR 'INT2' OR 'INT4' OR 'PREC' OR 'RAW' OR 'FLTP'.
+      IF GW_INPUT-VAL_NEW CA SY-ABCDE OR GW_INPUT-VAL_NEW CA ','.
+        CV_ERR_TYPE  = 'E'.
+        CV_ERR_MSG   = 'Wrong data type for input'.
+        EXIT.
+      ENDIF.
+  ENDCASE.
+ENDFORM.                    " PREP_VALUE
+*&---------------------------------------------------------------------*
+*&      Form  CHANGE_PO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_T_INPUT  text
+*      -->P_I_EBELN  text
+*      -->P_I_TESTRUN  text
+*      <--P_ERR_MSG  text
+*      <--P_ERR_TYPE  text
+*----------------------------------------------------------------------*
+FORM CHANGE_PO  TABLES   UT_INPUT STRUCTURE ZTMM001
+               USING    UV_EBELN
+                        UV_TESTRUN
+               CHANGING CV_ERR_MSG
+                        CV_ERR_TYPE.
+
+  DATA: LV_FLAG TYPE CHAR1,
+        LV_FIELD_NAME TYPE CHAR30,
+        LV_FLAG_NEW TYPE CHAR1.
+  DATA: TESTRUN LIKE  BAPIFLAG-BAPIFLAG.
+
+  SORT UT_INPUT.
+  LOOP AT UT_INPUT INTO GW_INPUT.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        INPUT  = GW_INPUT-EBELN
+      IMPORTING
+        OUTPUT = GW_INPUT-EBELN.
+    "--------------------------------------"
+    " Flag for append
+    "--------------------------------------"
+    CLEAR: LV_FLAG.
+    AT END OF TAB_TYPE_NAME1.
+      LV_FLAG = 'X'.
+    ENDAT.
+    AT END OF EBELN.
+      LV_FLAG_NEW = 'X'.
+    ENDAT.
+    "--------------------------------------"
+    " Assign value to fields
+    "--------------------------------------"
+    IF GW_INPUT-TAB_TYPE_NAME1 EQ 'GW_POTEXTITEM'.
+      GW_POTEXTITEM-PO_NUMBER  = GW_INPUT-EBELN.
+      GW_POTEXTITEM-PO_ITEM    = GW_INPUT-EBELP.
+      GW_POTEXTITEM-TEXT_ID    = GW_INPUT-TEXT_ID.
+      GW_POTEXTITEM-TEXT_LINE  = GW_INPUT-VAL_NEW.
+      APPEND GW_POTEXTITEM TO GT_POTEXTITEM[].
+      CLEAR: GW_POTEXTITEM.
+    ELSEIF GW_INPUT-TAB_TYPE_NAME1 EQ 'GW_POTEXTHEADER'.
+      GW_POTEXTHEADER-PO_NUMBER  = GW_INPUT-EBELN.
+      GW_POTEXTHEADER-TEXT_ID    = GW_INPUT-TEXT_ID.
+      GW_POTEXTHEADER-TEXT_LINE  = GW_INPUT-VAL_NEW.
+      APPEND GW_POTEXTHEADER TO GT_POTEXTHEADER[].
+      CLEAR: GW_POTEXTHEADER.
+    ELSE.
+      GV_STRUCTURE_NAME = GW_INPUT-TAB_TYPE_NAME1.
+      LV_FIELD_NAME = GW_INPUT-ZFIELD.
+      ASSIGN (GV_STRUCTURE_NAME) TO <FS_STRUC1>.
+      IF <FS_STRUC1> IS ASSIGNED.
+        ASSIGN COMPONENT LV_FIELD_NAME OF STRUCTURE <FS_STRUC1> TO <FS_VAL1>.
+        IF SY-SUBRC = 0.
+          <FS_VAL1> = GW_INPUT-VAL_NEW.
+          UNASSIGN: <FS_VAL1>.
+        ENDIF.
+        UNASSIGN: <FS_STRUC1>.
+      ENDIF.
+    ENDIF.
+
+    CASE GW_INPUT-TAB_TYPE_NAME1.
+      WHEN 'GW_POHEADER'.
+        ASSIGN COMPONENT LV_FIELD_NAME OF STRUCTURE GW_POHEADERX TO <FS_VAL2>.
+        IF SY-SUBRC = 0.
+          GW_POHEADERX-PO_NUMBER = 'X'.
+          <FS_VAL2> = 'X'.
+          UNASSIGN: <FS_VAL2>.
+        ENDIF.
+      WHEN 'GW_POITEM'.
+        GW_POITEMX-PO_ITEM = GW_POITEM-PO_ITEM = GW_INPUT-EBELP.
+        ASSIGN COMPONENT LV_FIELD_NAME OF STRUCTURE GW_POITEMX TO <FS_VAL2>.
+        IF SY-SUBRC = 0.
+          <FS_VAL2> = 'X'.
+          GW_POITEMX-PO_ITEMX = 'X'.
+          UNASSIGN: <FS_VAL2>.
+        ENDIF.
+    ENDCASE.
+
+    IF LV_FLAG EQ 'X'.
+      CASE GW_INPUT-TAB_TYPE_NAME1.
+        WHEN 'GW_POITEM'.
+          APPEND GW_POITEMX TO GT_POITEMX[].
+          CLEAR: GW_POITEMX.
+
+          APPEND GW_POITEM TO GT_POITEM[].
+          CLEAR: GW_POITEM.
+        WHEN 'GW_ORDER_TEXT'.
+*          GW_POITEMX-PO_ITEM = GW_POITEM-PO_ITEM = GW_INPUT-EBELP.
+*          APPEND GW_POITEMX TO GT_POITEMX[].
+*          CLEAR: GW_POITEMX.
+
+*          APPEND GW_POITEM TO GT_POITEM[].
+*          CLEAR: GW_POITEM.
+      ENDCASE.
+    ENDIF.
+    IF LV_FLAG_NEW EQ 'X'.
+      TESTRUN = UV_TESTRUN.
+      GV_PURCHASEORDER       = UV_EBELN.
+      GW_POHEADER-PO_NUMBER  = UV_EBELN.
+      GW_POHEADERX-PO_NUMBER = 'X'.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          INPUT  = GV_PURCHASEORDER
+        IMPORTING
+          OUTPUT = GV_PURCHASEORDER.
+
+      CALL FUNCTION 'BAPI_PO_CHANGE'
+        EXPORTING
+          PURCHASEORDER     = GV_PURCHASEORDER
+          POHEADER          = GW_POHEADER
+          POHEADERX         = GW_POHEADERX
+          TESTRUN           = TESTRUN
+        IMPORTING
+          EXPHEADER         = GW_EXPHEADER
+          EXPPOEXPIMPHEADER = GW_EXPPOEXPIMPHEADER
+        TABLES
+          RETURN            = GT_RETURN
+          POITEM            = GT_POITEM
+          POITEMX           = GT_POITEMX
+          POTEXTITEM        = GT_POTEXTITEM.
+      IF SY-SUBRC = 0.
+        READ TABLE GT_RETURN INTO GW_RETURN WITH KEY TYPE = 'E'.
+        IF SY-SUBRC = 0.
+          ROLLBACK WORK.
+          CV_ERR_TYPE = 'E'.
+          CV_ERR_MSG  = GW_RETURN-MESSAGE.
+          EXIT.
+        ELSE.
+          CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+            EXPORTING
+              WAIT = 'X'.
+          CV_ERR_TYPE = 'S'.
+        ENDIF.
+      ENDIF.
+      REFRESH: GT_RETURN,
+               GT_POITEM,
+               GT_POITEMX,
+               GT_POTEXTITEM.
+      CLEAR:   GV_PURCHASEORDER,
+               GW_POHEADER,
+               GW_POHEADERX,
+               TESTRUN,
+               GW_EXPHEADER,
+               GW_EXPPOEXPIMPHEADER.
+    ENDIF.
+
+    CLEAR: LV_FLAG_NEW,LV_FLAG.
+  ENDLOOP.
+
+ENDFORM.                    " CHANGE_PO
